@@ -17,7 +17,7 @@ from telegram.ext import (
     filters
 )
 
-# Integrasi Keep Alive untuk Replit
+# Integrasi Keep Alive
 from keep_alive import keep_alive
 
 # Logging setup
@@ -54,8 +54,7 @@ class ConfigManager:
             default_config = {"province_id": 31, "max_items_per_page": 5}
             self.save_config(default_config)
             return default_config
-        except Exception as e:
-            logger.error(f"Error loading config: {e}")
+        except:
             return {"province_id": 31, "max_items_per_page": 5}
     
     def save_config(self, config):
@@ -64,8 +63,7 @@ class ConfigManager:
                 json.dump(config, f, indent=4)
             self.config = config
             return True
-        except Exception as e:
-            logger.error(f"Error saving config: {e}")
+        except:
             return False
     
     def get_province_name(self, prov_id):
@@ -88,29 +86,49 @@ class BISlotExtractor:
         self.api_url = f"{self.base_url}/Order/GetKasKelByProvinceNew"
         self.province_id = province_id
         self.session = requests.Session()
-        self.session.headers.update({"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+        # Header Browser-Like Lengkap
+        self.session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
+            "X-Requested-With": "XMLHttpRequest",
+            "Origin": self.base_url,
+            "Referer": self.list_url
+        })
         self.token = ""
 
     def refresh_token(self):
         try:
+            # Replit IP sering diblokir Cloudflare, gunakan impersonate chrome124
             r = self.session.get(self.list_url, impersonate="chrome124", timeout=30)
             token_match = re.search(r'__RequestVerificationToken.*?value="([^"]+)"', r.text)
             if token_match:
                 self.token = token_match.group(1)
                 return True
+            print("🚫 Token match not found. Site might be blocking or Down.")
             return False
         except Exception as e:
-            logger.error(f"Token error: {e}")
+            print(f"❌ Connection Error: {e}")
             return False
 
     def get_all_data(self):
         if not self.token and not self.refresh_token(): return []
-        payload = {"draw": 1, "start": 0, "length": 100, "provId": self.province_id, "__RequestVerificationToken": self.token}
-        headers = {"x-requested-with": "XMLHttpRequest"}
+        
+        payload = {
+            "draw": 1, "start": 0, "length": 100, 
+            "provId": self.province_id, 
+            "__RequestVerificationToken": self.token
+        }
+        
         try:
-            r = self.session.post(self.api_url, data=payload, headers=headers, impersonate="chrome124", timeout=30)
+            r = self.session.post(self.api_url, data=payload, impersonate="chrome124", timeout=30)
+            if r.status_code != 200:
+                print(f"📡 API returned status: {r.status_code}")
+                # Jika 403, berarti IP Replit kena blokir
+                return []
             return r.json().get("data", [])
-        except Exception:
+        except Exception as e:
+            print(f"⚠️ API Error: {e}")
             return []
 
     def process_data(self):
@@ -152,9 +170,9 @@ class BISlotBot:
         prov_id = self.config_manager.get_province_id()
         prov_name = self.config_manager.get_province_name(prov_id)
         msg = (
-            "👋 *BI Slot Monitor (PINTAR)*\n\n"
+            "👋 *BI Slot Monitor*\n\n"
             f"📍 *Wilayah:* `{prov_name}`\n"
-            "Ketik ID provinsi apa saja untuk ganti wilayah.\n\n"
+            "Ketik ID provinsi (cth: `11`) untuk ganti.\n\n"
             "Pilih menu:"
         )
         keyboard = [
@@ -181,19 +199,19 @@ class BISlotBot:
                     f"✅ **Wilayah Berhasil Diubah!**\n📍 Sekarang memantau: `{prov_name}`", 
                     parse_mode='Markdown', reply_markup=kb
                 )
-        except Exception:
+        except:
             pass
 
     async def show_slot_page(self, update_or_query, context, page=1):
         is_cb = hasattr(update_or_query, 'data')
         msg_obj = update_or_query.message if is_cb else update_or_query
         
-        status = await msg_obj.reply_text("🔍 *Mengambil Data & ID...*", parse_mode='Markdown')
+        status = await msg_obj.reply_text("🔍 *Mengambil Data PINTAR...*", parse_mode='Markdown')
         prov_id = self.config_manager.get_province_id()
         data = BISlotExtractor(prov_id).process_data()
 
         if not data:
-            await status.edit_text(f"❌ Tidak ada slot tersedia untuk {self.config_manager.get_province_name(prov_id)}.")
+            await status.edit_text(f"❌ Tidak ada data tersedia untuk {self.config_manager.get_province_name(prov_id)}.\n(IP Server mungkin diblokir, coba ganti ID atau tunggu sejenak).")
             return
 
         items_per_page = 5
@@ -201,7 +219,7 @@ class BISlotBot:
         start = (page - 1) * items_per_page
         page_data = data[start:start + items_per_page]
 
-        res = f"📊 *DETAIL SLOT & ID* (Hal {page}/{total_pages})\n📍 *{self.config_manager.get_province_name(prov_id)}*\n"
+        res = f"📊 *DETAIL SLOT* (Hal {page}/{total_pages})\n📍 *{self.config_manager.get_province_name(prov_id)}*\n"
         res += "—" * 15 + "\n"
         
         for item in page_data:
@@ -253,7 +271,7 @@ class BISlotBot:
             for k, v in plist.items():
                 txt += f"• `{k}` : {v}\n"
                 count += 1
-                if count == 25: break
+                if count == 20: break
             txt += "\n💡 Ketik ID provinsi mana saja untuk ganti."
             await query.message.edit_text(txt, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Kembali", callback_data="back_to_menu")]]))
         elif query.data.startswith("page_"):
@@ -265,24 +283,19 @@ class BISlotBot:
 # RUNNER
 # =========================
 if __name__ == "__main__":
-    # Gunakan Secret BOT_TOKEN di Replit
     BOT_TOKEN = os.environ.get('BOT_TOKEN')
     
     if not BOT_TOKEN:
-        print("❌ Error: BOT_TOKEN tidak ditemukan di Environment Variables!")
+        print("❌ Error: BOT_TOKEN tidak ditemukan di Secrets!")
     else:
-        # Jalankan Keep Alive Server
         keep_alive()
-        
-        # Inisialisasi Bot
         bot_logic = BISlotBot()
         app = Application.builder().token(BOT_TOKEN).build()
 
-        # Handlers
         app.add_handler(CommandHandler("start", bot_logic.start))
         app.add_handler(CommandHandler("setprov", bot_logic.setprov_handler))
         app.add_handler(MessageHandler(filters.Regex(r'^\d{1,2}$'), bot_logic.setprov_handler))
         app.add_handler(CallbackQueryHandler(bot_logic.button_callback))
 
-        print("✅ Bot is online on Replit...")
+        print("✅ Bot is online...")
         app.run_polling()
